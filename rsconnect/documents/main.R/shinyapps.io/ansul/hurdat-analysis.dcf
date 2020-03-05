@@ -1,0 +1,12 @@
+name: hurdat-analysis
+title: hurdat-analysis
+username:
+account: ansul
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 1886850
+bundleId: 2842663
+url: https://ansul.shinyapps.io/hurdat-analysis/
+when: 1583141516.77917
+asMultiple: FALSE
+asStatic: FALSE
