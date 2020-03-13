@@ -11,6 +11,7 @@ library(plyr)
 library(maptools)
 library(sp)
 library(data.table)
+library(RColorBrewer)
 
 
 
@@ -129,44 +130,150 @@ hurdat$DateTime <- as.POSIXct(
   strptime(hurdat$DateTime, format = "%Y-%m-%d %H:%M:%S")
 )
 hurdat$Name[hurdat$Name == "UNNAMED"] <- hurdat$Key[hurdat$Name == "UNNAMED"]
-hurdat$years<-year(hurdat$DateTime)
-
-df<-hurdat[(hurdat$years>2004),]
-#df$colour<-ifelse(df$Status == "TS", "Green",(ifelse(df$Status == "TD", "Blue",(ifelse(df$Status == "HU", "Red","Black")))))
-coordinates(df) <- c( "Lon", "Lat" )
+hurdat$Year<-year(hurdat$DateTime)
 
 
-#initialisation of counter
-id <- 1
-Keys<-as.array(unique(df$Key))
-#for each Name, create a line that connects all points with that Name
-for ( i in Keys) 
-{
-  df3<-df[(df$Key==i),]
-  event.lines <- SpatialLines( list( Lines( Line( df3@coords ), ID=id )),
-                               proj4string = CRS( "+init=epsg:4326" ) )
-  if ( id == 1 ) {
-    sp_lines  <- event.lines
-  } else {
-    sp_lines  <- spRbind( sp_lines, event.lines)
-  }
-  
-  id <- id + 1                                                                  
-}
+hurdat$Category[hurdat$Status == "TD"|hurdat$Status == "SD"] = 0.5
+hurdat$Category[hurdat$Status == "TS"|hurdat$Status == "SS"] = 0.75
+hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=64 & hurdat$Wind<=82] = 1
+hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=83 & hurdat$Wind<=95] = 2
+hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=96 & hurdat$Wind<=112] = 3
+hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=113 & hurdat$Wind<=136] = 4
+hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=137] = 5
 
+hurdat$Name <- paste(hurdat$Name, "-", hurdat$Year)
 hurdat$Date =  format(hurdat$DateTime,format='%Y-%m-%d')
 
+x <- purrr::map("pacific.txt", readr::read_lines)
+
+x <- purrr::flatten_chr(x)
+
+pacific <- as.data.frame(x, stringsAsFactors = FALSE)
+header_rows <- grep(pattern = "^[[:alpha:]]{2}[[:digit:]]{6}.+", x)
+
+# Split header_rows into variables
+pacific <- tidyr::extract(
+  data = pacific,
+  col = "x",
+  into = c("Key", "Name", "Lines"),
+  regex = paste0(
+    "([:alpha:]{2}[:digit:]{6}),\\s+", # Key
+    "([[:upper:][:digit:]-]+)\\s*,\\s+", # Name
+    "([:digit:]+)," # Number of lines that follow
+  ),
+  remove = FALSE,
+  convert = TRUE
+)
+
+# Fill headers down
+pacific <- tidyr::fill(data = pacific, .data$Key, .data$Name, .data$Lines)
+
+# Remove original header rows
+pacific <- pacific[-header_rows, ]
+
+# Split storm details into variables
+pacific <- tidyr::extract(
+  data = pacific,
+  col = "x",
+  into = c(
+    "Year",
+    "Month",
+    "Date",
+    "Hour",
+    "Minute",
+    "Record",
+    "Status",
+    "Lat",
+    "LatHemi",
+    "Lon",
+    "LonHemi",
+    "Wind",
+    "Pressure",
+    "NE34",
+    "SE34",
+    "SW34",
+    "NW34",
+    "NE50",
+    "SE50",
+    "SW50",
+    "NW50",
+    "NE64",
+    "SE64",
+    "SW64",
+    "NW64"
+  ),
+  regex = paste0(
+    "^([:digit:]{4})", # Year
+    "([:digit:]{2})", # Month
+    "([:digit:]{2}),\\s+", # Date
+    "([:digit:]{2})", # Hour
+    "([:digit:]{2}),\\s+", # Minute
+    "([:alpha:]*),\\s+", # Record
+    "([:alpha:]{2}),\\s+", # Status
+    "([:digit:]{1,2}\\.[:digit:]{1})", # Latitude
+    "([:alpha:]{1}),\\s+", # Hemisphere
+    "([:digit:]{1,3}\\.[:digit:]{1})", # Longitude
+    "([:alpha:]{1}),\\s+", # Hemisphere
+    "([[:digit:]-]+),\\s+", # Wind
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+),\\s+", #
+    "([[:digit:]-]+).*" #
+  ),
+  remove = FALSE,
+  convert = TRUE
+)
+
+pacific <- dplyr::mutate(
+  .data = pacific,
+  Lat = dplyr::if_else(
+    .data$LatHemi == "N", .data$Lat * 1, .data$Lat * -1
+  ),
+  Lon = dplyr::if_else(
+    .data$LonHemi == "E", .data$Lon * 1, .data$Lon * -1
+  )
+)
+
+pacific$DateTime <- paste(
+  paste(pacific$Year, pacific$Month, pacific$Date, sep = "-"),
+  paste(pacific$Hour, pacific$Minute, "00", sep = ":"),
+  sep = " "
+)
+
+pacific <- dplyr::select(
+  .data = pacific,
+  .data$Key, .data$Name, .data$DateTime, .data$Record:.data$Lat,
+  .data$Lon, .data$Wind:.data$NW64
+)
+
+pacific$DateTime <- as.POSIXct(
+  strptime(pacific$DateTime, format = "%Y-%m-%d %H:%M:%S")
+)
+pacific$Name[pacific$Name == "UNNAMED"] <- pacific$Key[pacific$Name == "UNNAMED"]
+pacific$Year<-year(pacific$DateTime)
 
 
-hurdat$Category[hurdat$Status == "TS"] = 2
-hurdat$Category[hurdat$Status == "TD"] = 1
-hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=64 & hurdat$Wind<=82] = 3
-hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=83 & hurdat$Wind<=95] = 4
-hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=96 & hurdat$Wind<=112] = 5
-hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=113 & hurdat$Wind<=136] = 6
-hurdat$Category[hurdat$Status == "HU" & hurdat$Wind>=137] = 7
+pacific$Category[pacific$Status == "TD"|pacific$Status == "SD"] = 0.5
+pacific$Category[pacific$Status == "TS"|pacific$Status == "SS"] = 0.75
+pacific$Category[pacific$Status == "HU" & pacific$Wind>=64 & pacific$Wind<=82] = 1
+pacific$Category[pacific$Status == "HU" & pacific$Wind>=83 & pacific$Wind<=95] = 2
+pacific$Category[pacific$Status == "HU" & pacific$Wind>=96 & pacific$Wind<=112] = 3
+pacific$Category[pacific$Status == "HU" & pacific$Wind>=113 & pacific$Wind<=136] = 4
+pacific$Category[pacific$Status == "HU" & pacific$Wind>=137] = 5
 
+pacific$Name <- paste(pacific$Name, "-", pacific$Year)
+pacific$Date =  format(pacific$DateTime,format='%Y-%m-%d')
 
+pacific$Lon[pacific$Lon<0] = pacific$Lon[pacific$Lon<0] + 360
 
 df1 = hurdat[c("Key","Wind")]
 df2 = hurdat[c("Key","Pressure")]
@@ -194,13 +301,13 @@ df2$DateTime = year(df2$DateTime)
 df2 = aggregate(rep(1, nrow(df2)), by = list(x = df2$Category, y = df2$DateTime), sum)
 colnames(df2) = c("Category", "Year", "Count")
 
-df2$TD[df2$Category == 1] <- df2$Count[df2$Category == 1]
-df2$TS[df2$Category == 2] <- df2$Count[df2$Category == 2]
-df2$HU1[df2$Category == 3] <- df2$Count[df2$Category == 3]
-df2$HU2[df2$Category == 4] <- df2$Count[df2$Category == 4]
-df2$HU3[df2$Category == 5] <- df2$Count[df2$Category == 5]
-df2$HU4[df2$Category == 6] <- df2$Count[df2$Category == 6]
-df2$HU5[df2$Category == 7] <- df2$Count[df2$Category == 7]
+df2$TD[df2$Category == 0.5] <- df2$Count[df2$Category == 0.5]
+df2$TS[df2$Category == 0.75] <- df2$Count[df2$Category == 0.75]
+df2$HU1[df2$Category == 1] <- df2$Count[df2$Category == 1]
+df2$HU2[df2$Category == 2] <- df2$Count[df2$Category == 2]
+df2$HU3[df2$Category == 3] <- df2$Count[df2$Category == 3]
+df2$HU4[df2$Category == 4] <- df2$Count[df2$Category == 4]
+df2$HU5[df2$Category == 5] <- df2$Count[df2$Category == 5]
 
 df2["Category"] <- NULL
 df2["Count"] <- NULL
@@ -208,12 +315,12 @@ df2[is.na(df2)] <- 0
 
 df2 = ddply(df2,"Year",numcolwise(sum))
 
-Names<-as.array(unique(df$Name))
-yr<-2005:2018
-#yr<-append(yr,"All",after = 0)
-#Names<-append(Names,"All",after = 0)
+Names<-as.array(unique(hurdat$Name))
+yr<-1851:2018
+toph<-hurricanes[order(hurricanes$Wind, decreasing = TRUE),]
+toph<-head(toph,10)
 
-
+basemap = c("Stamen.Toner", "Default", "Esri.NatGeoWorldMap" ,"Esri.WorldTopoMap" )
 
 ui <- dashboardPage(
   dashboardHeader(title = "CS 424 Project 2"),
@@ -229,9 +336,10 @@ ui <- dashboardPage(
                      ),
                      conditionalPanel(
                        condition = "input.flt == 'Name'",
-                       selectInput("ipnm", "Select the Name to visualize", Names),   
+                       selectInput("ipnm", "Select the Name to visualize", Names,selected= "OSCAR - 2018"),   
                      ),
-                     
+                     selectInput("Basemap", "Select a Basemap Style", basemap, selected = "Default"),
+                     checkboxInput("land", "Only hurricanes which made Landfall", value = FALSE),
                      
                      menuItem("About",tabName = "About"))
   ),
@@ -248,19 +356,54 @@ ui <- dashboardPage(
                  ),
                  column(8,
                         fluidRow(
-                          box(title = "Map", solidHeader = TRUE, status = "primary", width = 12,
-                              leafletOutput("leaf", height = 750)
-                          ),
-                        )
+                          box( title = "Hurricanes Per Year", solidHeader = TRUE, status = "primary", width = 12,
+                               plotOutput("bar1",height = 500)
+                          )
+                        ),
                  ),
                  
                  
                ),
                fluidRow(
-                 box( title = "Hurricanes Per Year", solidHeader = TRUE, status = "primary", width = 12,
-                      plotOutput("bar1",height = 600)
-                 )
+                column(6,
+                       fluidRow(
+                         box(title = "Atlantic Hurricanes", solidHeader = TRUE, status = "primary", width = 12,
+                             leafletOutput("leaf", height = 500)
+                         ),
+                       ),
+                ),
+                column(6,
+                       fluidRow(
+                         box(title = "Pacific Hurricanes", solidHeader = TRUE, status = "primary", width = 12,
+                             leafletOutput("leaf2", height = 500)
+                         ),
+                       ),
+                ),
                ),
+               fluidRow(
+                 column(4,
+                        fluidRow(
+                          box( title = "Hurricanes Per Year", solidHeader = TRUE, status = "primary", width = 12,
+                               plotOutput("bar2",height = 300)
+                          )
+                        ),
+                 ),
+                 column(4,
+                        fluidRow(
+                          box( title = "Max Wind Speed", solidHeader = TRUE, status = "primary", width = 12,
+                               plotOutput("bar3",height = 300)
+                          )
+                        ),
+                 ),
+                 column(4,
+                        fluidRow(
+                          box( title = "Min Pressure", solidHeader = TRUE, status = "primary", width = 12,
+                               plotOutput("bar4",height = 300)
+                          )
+                        ),
+                 ),
+               )
+               
                
       ),
       tabItem(tabName = "About",  h1("Author: Ansul Goenka, Parikshit Solunke"), h1("Libraries used: shiny, shinydashboard, 
@@ -273,7 +416,6 @@ ui <- dashboardPage(
 
 
 server <- function(input, output) {
-  plotdata<-sp_lines
   # increase the default font size
   theme_set(theme_grey(base_size = 18))
   
@@ -288,8 +430,6 @@ server <- function(input, output) {
       data = hurdat
     }
   })
-  
-  
   
   output$bar1 <- renderPlot({
     data = df1
@@ -307,43 +447,172 @@ server <- function(input, output) {
                                     HU4 = "darkgreen", HU5 = "darkblue")) + scale_x_discrete(breaks = seq(1851,2018, by = 10))
   })
   
-  output$leaf <- renderLeaflet({
+  output$bar2 <- renderPlot({
+    data = df1
+    data$Year = year(data$DateTime)
+    data$DateTime = NULL
+    data = as.data.frame(table(data$Year))
+    colnames(data) <- c("Year", "Total")
+    
+    pac = pacific[c("Key","Year")] 
+    pac = data.table(pac)
+    pac = pac[,list(Year = min(Year)), by = Key]
+    pac = data.frame(pac)
+    pac = as.data.frame(table(pac$Year))
+    colnames(pac) <- c("Year", "Count")
+    tot = merge(data, pac, all = TRUE)
+    tot[is.na(tot)] <- 0
+    pac = tot
+    pac$Total = NULL
+    tot$Total = tot$Total + tot$Count
+    tot$Count = NULL
+    tot$Type = "Total"
+    colnames(pac) <- c("Year", "Total")
+    
+    data$Type = "Atlantic"
+    pac$Type = "Pacific"
+    data = rbind(data,pac)
+    data = rbind(data,tot)
+    
+    ggplot(data) + geom_bar(aes(x=Year,y=Total, fill = Type) ,stat="identity",position = position_dodge2()) + 
+      labs(x="Day", y = "Count") + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+      scale_x_discrete(breaks = seq(1851,2018, by = 10))
+    
+  })
+  
+  output$bar3 <- renderPlot({
+    data = hurdat[c("Year","Wind")]
+    data = ddply(data, "Year", numcolwise(max))
+    
+    pac = pacific[c("Year","Wind")] 
+    pac = ddply(pac, "Year", numcolwise(max))
+    
+    data = merge(data, pac, by.x = "Year", by.y="Year", all = TRUE)
+    colnames(data) <- c("Year","Atlantic","Pacific")
+    
+    ggplot(data, aes(x=Year,group = 1),) + geom_line(aes(y=Atlantic, color = 'Atlantic'), na.rm = TRUE) + 
+      geom_line(aes(y=Pacific, color = 'Pacific'), na.rm = TRUE)
+  })
+  
+  output$bar4 <- renderPlot({
+    data = hurdat[c("Year","Pressure")]
+    data = ddply(data, "Year", numcolwise(min))
+    
+    pac = pacific[c("Year","Pressure")] 
+    pac = ddply(pac, "Year", numcolwise(min))
+    
+    data = merge(data, pac, by.x = "Year", by.y="Year", all = TRUE)
+    colnames(data) <- c("Year","Atlantic","Pacific")
+    data$Atlantic[data$Atlantic == -999 ] <- NA
+    data$Pacific[data$Pacific == -999] <- NA
+    data = data[!is.na(data$Atlantic) | !is.na(data$Pacific),]
+    
+    ggplot(data, aes(x=Year,group = 1),) + geom_line(aes(y=Atlantic, color = 'Atlantic'), na.rm = TRUE) + 
+      geom_line(aes(y=Pacific, color = 'Pacific'), na.rm = TRUE)
+    
+  })
+  
+  output$leaf2 <- renderLeaflet({
+    df<-pacific
+    df$colour<-ifelse(df$Category == 0.5, "lightgreen",(ifelse(df$Category == 0.75, "darkgreen",(ifelse(df$Category ==1, "yellow",
+                                                                                                        (ifelse(df$Category ==2, "orange",(ifelse(df$Category ==3, "darkorange",(ifelse(df$Category ==4, "red",
+                                                                                                                                                                                        (ifelse(df$Category ==5, "darkred","darkgrey")))))))))))))
+    df$colour[is.na(df$colour)] <- "darkgrey"
+    landfalls<-df[(df$Record=="L"),]
+    
     if(stri_cmp(input$flt, "None")!=0)
     {
       if(input$flt=="Year")
       {
-        df<-df[(df$years==input$ipyr),]
+        df3<-df[(df$Year==input$ipyr),]
       }
       if(input$flt=="Name")
       {
-        df<-df[(df$Name==input$ipnm),]
+        df3<-df[(df$Name==input$ipnm),]
       }
-      
-      id <- 1
-      Names<-as.array(unique(df$Name))
-      for ( i in Names) 
+      if(input$flt=="TopTen")
       {
-        df3<-df[(df$Name==i),]
-        ev.lines <- SpatialLines( list( Lines( Line( df3@coords ), ID=id )),
-                                  proj4string = CRS( "+init=epsg:4326" ) )
-        if ( id == 1 ) {
-          sp_lines2  <- ev.lines
-        } else {
-          sp_lines2  <- spRbind( sp_lines2, ev.lines)
-        }
-        
-        id <- id + 1                                                                  
+        df3<-df[(df$Key==toph$Key),]
       }
-      plotdata<-sp_lines2
       
     }
     else{
-      plotdata<-sp_lines
+      df3<-df[(df$Year>2004),]
+    }
+    if(input$land)
+    {
+      df3<-df3 %>%
+        filter(Name %in% landfalls$Name)
     }
     
-    leaflet()%>%
-      addTiles() %>%
-      addPolylines( data = plotdata,color="Red", weight =2,highlightOptions = highlightOptions(color = "white",weight = 5, bringToFront = F, opacity = 1) )->map
+    Names2<-as.array(unique(df3$Name))
+    map <- leaflet()
+    if(input$Basemap == "Default")
+      map <- addTiles(map)
+    else
+      map <- addProviderTiles(map, provider = input$Basemap)
+    for ( i in Names2) 
+    {
+      df4<-df3[(df3$Name==i),]
+      
+      
+      map<-addCircles(map, lat=df4$Lat,lng=df4$Lon, weight =4,color=df4$colour)
+      map<-addPolylines(map, lat=df4$Lat,lng=df4$Lon, weight =1,color="White",opacity = 0.60, 
+                        highlightOptions = highlightOptions(color = "white",bringToFront = T), popup = df4$Name)
+    }
+    
+    map
+  })
+  
+  output$leaf <- renderLeaflet({
+    df<-hurdat
+    df$colour<-ifelse(df$Category == 0.5, "lightgreen",(ifelse(df$Category == 0.75, "darkgreen",(ifelse(df$Category ==1, "yellow",
+                    (ifelse(df$Category ==2, "orange",(ifelse(df$Category ==3, "darkorange",(ifelse(df$Category ==4, "red",
+                    (ifelse(df$Category ==5, "darkred","darkgrey")))))))))))))
+    df$colour[is.na(df$colour)] <- "darkgrey"
+    landfalls<-df[(df$Record=="L"),]
+    
+    if(stri_cmp(input$flt, "None")!=0)
+    {
+      if(input$flt=="Year")
+      {
+        df3<-df[(df$Year==input$ipyr),]
+      }
+      if(input$flt=="Name")
+      {
+        df3<-df[(df$Name==input$ipnm),]
+      }
+      if(input$flt=="TopTen")
+      {
+        df3<-df[(df$Key==toph$Key),]
+      }
+      
+    }
+    else{
+      df3<-df[(df$Year>2004),]
+    }
+    if(input$land)
+    {
+      df3<-df3 %>%
+        filter(Name %in% landfalls$Name)
+    }
+    
+    Names2<-as.array(unique(df3$Name))
+    map <- leaflet()
+    if(input$Basemap == "Default")
+      map <- addTiles(map)
+    else
+      map <- addProviderTiles(map, provider = input$Basemap)
+    for ( i in Names2) 
+    {
+      df4<-df3[(df3$Name==i),]
+      
+      
+      map<-addCircles(map, lat=df4$Lat,lng=df4$Lon, weight =4,color=df4$colour)
+      map<-addPolylines(map, lat=df4$Lat,lng=df4$Lon, weight =2,color="White",opacity = 0.60, 
+                        highlightOptions = highlightOptions(color = "white",bringToFront = T))
+    }
+    
     map
   })
   
@@ -351,7 +620,7 @@ server <- function(input, output) {
     DT::datatable({  
       hurricanes = merge(nameKey, hurricanes, by.x="Key", by.y="Key")
     }, 
-    options = list(searching = FALSE, pageLength = 15, lengthChange = FALSE, order = list(list(1, 'desc'))
+    options = list(searching = FALSE, pageLength = 7, lengthChange = FALSE, order = list(list(1, 'desc'))
     ), rownames = FALSE 
     )
   )
